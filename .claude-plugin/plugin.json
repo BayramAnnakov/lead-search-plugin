@@ -1,0 +1,21 @@
+{
+  "name": "lead-search",
+  "description": "AI-powered outbound lead search agent. Define your ICP in natural language, get ranked leads from LinkedIn with personalized outreach angles.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Onsa AI",
+    "email": "bayram@onsa.ai"
+  },
+  "homepage": "https://github.com/BayramAnnakov/lead-search-plugin",
+  "license": "MIT",
+  "keywords": [
+    "sales",
+    "lead-search",
+    "outbound",
+    "prospecting",
+    "ICP",
+    "LinkedIn",
+    "B2B",
+    "lead-generation"
+  ]
+}

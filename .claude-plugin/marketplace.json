@@ -1,0 +1,14 @@
+{
+  "name": "lead-search-marketplace",
+  "description": "Outbound lead search plugin for Claude Code",
+  "owner": {
+    "name": "Onsa AI"
+  },
+  "plugins": [
+    {
+      "name": "lead-search",
+      "source": "./",
+      "description": "Find and rank outbound leads matching your ICP using LinkedIn and web research"
+    }
+  ]
+}
