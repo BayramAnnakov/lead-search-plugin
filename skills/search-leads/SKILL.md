@@ -243,58 +243,113 @@ Based on these results:
 
 ## Tool Usage
 
-### MCP Tools Priority
+The skill works with two Anysite MCP server variants. Check which is available and use accordingly:
 
-**1. Anysite MCP** (primary - structured LinkedIn data):
+### Variant A: Anysite Remote (meta-tools)
+
+If `discover`/`execute` tools are available (`anysite-remote`), use the meta-tool workflow:
+
 ```
-search_linkedin_users keywords="AI startup founder" title="CEO" location="Seattle" count=20
-  -> Returns: name, title, company, location, profile URL
+# Step 1: Discover endpoints (do this once per source)
+discover(source="linkedin", category="search")
+discover(source="linkedin", category="user")
+discover(source="linkedin", category="company")
+discover(source="crunchbase", category="db")
+discover(source="yc", category="search")
+discover(source="sec", category="search")
 
-get_linkedin_profile profile_url="linkedin.com/in/john-doe"
-  -> Returns: full background, experience, education, skills, followers
+# Step 2: Execute searches
+execute(source="linkedin", category="search", endpoint="sn_search_users",
+  params={keywords: "AI", current_titles: ["CEO"], location: "Seattle",
+          company_sizes: ["11-50","51-200"], count: 10})
 
-get_linkedin_company company_url="linkedin.com/company/acme"
-  -> Returns: size, industry, HQ, description, specialties
+execute(source="crunchbase", category="db", endpoint="db_search",
+  params={keywords: "AI", location: "Seattle",
+          employee_count_min: 11, employee_count_max: 250,
+          last_funding_type: ["seed","series_a","series_b"], count: 10})
 
-get_linkedin_company_posts company_url="..." count=5
-  -> Returns: recent posts, announcements
+execute(source="yc", category="search", endpoint="search_companies",
+  params={industries: ["B2B"], is_hiring: true, count: 10})
 
-get_linkedin_company_employee_stats company_url="..."
-  -> Returns: employee count, growth rate, department breakdown
+# Step 3: Enrich
+execute(source="linkedin", category="user", endpoint="get_profile",
+  params={user: "john-doe"})
+execute(source="linkedin", category="company", endpoint="get_company",
+  params={company: "acme"})
 
-search_linkedin_companies keywords="B2B SaaS" count=10
-  -> Returns: company name, size, industry, URL
-
-duckduckgo_search query="Acme Corp Series A funding 2026"
-  -> Returns: search results with URLs and snippets
+# Step 4: Paginate if needed
+get_page(cache_key="<from execute result>", offset=10, limit=10)
 ```
 
-**2. Firecrawl MCP** (website intelligence):
+**Crunchbase** is especially valuable for lead search because it provides:
+- Funding history (round type, amount, date, investors)
+- Employee count ranges
+- Company categories and operating status
+- Revenue ranges (when available)
+- Trigger events: leadership hires, acquisitions, layoffs, news
+
+**Y Combinator** search is great for finding funded startups:
+- Filter by batch (e.g., "Winter 2026"), industry, team size, hiring status
+- Get founder details directly via `search_founders`
+
+**SEC EDGAR** provides public company filings - useful for enterprise lead enrichment.
+
+### Variant B: Anysite MCP (direct tools)
+
+If individual named tools are available (`anysite-mcp`), use them directly:
+
+```
+# LinkedIn search
+search_linkedin_users: keywords, title, location, count
+linkedin_sn_search_users: keywords, current_titles, location, company_sizes, count
+get_linkedin_profile: user alias or URL
+get_linkedin_company: company alias or URL
+get_linkedin_company_posts: company URN, count
+get_linkedin_company_employee_stats: company URN
+
+# Company search
+search_linkedin_companies: keywords, count
+
+# YC data
+search_yc_companies: query, industries, batches, team_size_min/max, is_hiring, count
+search_yc_founders: query, industries, batches, titles, count
+get_yc_company: company slug
+
+# SEC filings
+search_sec_companies: entity_name, forms, date_from, date_to, count
+
+# Web search
+duckduckgo_search: query, count
+```
+
+### Firecrawl MCP (website intelligence, optional)
+
 ```
 firecrawl_scrape url="https://company.com/about"
   -> Returns: page content (team size, product, market)
 
 firecrawl_extract url="https://company.com" prompt="Extract company size, product, and target market"
   -> Returns: LLM-extracted structured data
-
-firecrawl_search query="[Company] funding announcement"
-  -> Returns: web search results with content
 ```
 
-**3. Built-in Web Search** (always available fallback):
+### Built-in Web Search (always available fallback)
+
 ```
 WebSearch query="[Company] news funding 2026"
 ```
 
-### Search Workflow
+### Recommended Search Workflow
 
 1. Parse ICP into search parameters
-2. **Anysite `search_linkedin_users`** (2-3 parallel searches with title variations)
-3. Deduplicate results across searches
-4. **Anysite `get_linkedin_profile`** + `get_linkedin_company` (parallel enrichment for top 10-15)
-5. **Anysite `duckduckgo_search`** for trigger events on top companies
-6. Score, rank, and generate outreach angles
-7. Present structured results
+2. **LinkedIn search** (2-3 parallel searches with title variations)
+3. **Crunchbase search** (parallel - find companies by funding stage, size, location)
+4. Cross-reference: match Crunchbase companies with LinkedIn people
+5. **YC search** (if targeting startups - find by industry, batch, hiring status)
+6. Deduplicate results across sources
+7. **Enrich** top 10-15: LinkedIn profiles + company data + Crunchbase funding details
+8. **DuckDuckGo** for trigger events on top companies
+9. Score, rank, and generate outreach angles
+10. Present structured results
 
 ---
 
