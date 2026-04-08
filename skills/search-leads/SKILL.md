@@ -5,7 +5,7 @@ license: MIT
 compatibility: Works best with Anysite MCP (LinkedIn data) or Firecrawl MCP (website intelligence). Falls back to built-in WebSearch if no MCP tools available.
 metadata:
   author: Onsa AI
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Outbound Lead Search Agent
@@ -54,6 +54,44 @@ When given a lead search request, execute this workflow:
 
 If the request is too vague to search (e.g., "find me leads"), ask ONE clarifying question:
 > "What do you sell and who typically buys it? One sentence is enough."
+
+### Step 1b: Classify Query Complexity
+
+Before searching, classify the query:
+
+**Simple query** (1-2 constraints) - go straight to LinkedIn search:
+> "Find VP of Sales at B2B SaaS in the US"
+→ Title + Industry + Location → one LinkedIn search handles it
+
+**Compound query** (3+ constraints, niche vertical, or non-searchable criteria) - decompose first:
+> "Find female founders in Voice AI in Bay Area who raised funding recently"
+→ 4 constraints: gender + role + niche vertical + geography + funding recency
+
+**Decomposition strategy for compound queries:**
+
+1. **Identify which constraints are API-searchable and which are not:**
+   - Searchable: title/role, location, company size, industry, keywords
+   - Partially searchable: funding stage (Crunchbase), YC batch (YC search)
+   - NOT searchable via API: gender, ethnicity, personality traits
+
+2. **Choose the search anchor** - the most specific searchable constraint:
+   - Niche vertical (e.g., "Voice AI") → search companies first, then find people
+   - Specific role at known companies → search people directly
+   - Funding stage → search Crunchbase first, then find founders on LinkedIn
+
+3. **Plan the search as sequential steps, not one query:**
+   - Step A: Find COMPANIES matching the vertical (Crunchbase, DuckDuckGo, YC, LinkedIn company search)
+   - Step B: Find PEOPLE at those companies (LinkedIn people search filtered by company)
+   - Step C: Apply non-searchable filters manually (check names for gender, review profiles for other criteria)
+   - Step D: Verify remaining criteria via enrichment (funding from Crunchbase/news, team size from LinkedIn)
+
+4. **For gender-based queries:** No API supports gender filtering. After finding candidates, infer gender from first names. This is imperfect - acknowledge limitations for ambiguous or non-Western names. Cast a wider net and filter down rather than trying to pre-filter.
+
+5. **For niche verticals** (Voice AI, quantum computing, synthetic biology, etc.): LinkedIn keyword search often fails because few people put niche terms in their title. Instead:
+   - Search DuckDuckGo: "[vertical] startups [location] 2025 2026" to find company names
+   - Search Crunchbase by keywords for that vertical
+   - Search YC companies by industry if applicable
+   - Then find founders/leaders at those specific companies on LinkedIn
 
 ### Step 2: Research Context (if needed)
 
@@ -288,6 +326,11 @@ get_page(cache_key="<from execute result>", offset=10, limit=10)
 - Revenue ranges (when available)
 - Trigger events: leadership hires, acquisitions, layoffs, news
 
+**Crunchbase reliability note:** Complex multi-parameter queries (location + keywords + funding filters combined) may return 500 errors. If this happens:
+- Simplify the query: use fewer filters, try keywords alone first
+- Use `query_cache` to filter results after a simpler fetch succeeds
+- Fall back to DuckDuckGo: `"[company] series A funding 2025 2026"` for funding verification
+
 **Y Combinator** search is great for finding funded startups:
 - Filter by batch (e.g., "Winter 2026"), industry, team size, hiring status
 - Get founder details directly via `search_founders`
@@ -340,16 +383,38 @@ WebSearch query="[Company] news funding 2026"
 
 ### Recommended Search Workflow
 
+**For simple queries (1-2 constraints):**
 1. Parse ICP into search parameters
 2. **LinkedIn search** (2-3 parallel searches with title variations)
-3. **Crunchbase search** (parallel - find companies by funding stage, size, location)
-4. Cross-reference: match Crunchbase companies with LinkedIn people
-5. **YC search** (if targeting startups - find by industry, batch, hiring status)
-6. Deduplicate results across sources
-7. **Enrich** top 10-15: LinkedIn profiles + company data + Crunchbase funding details
-8. **DuckDuckGo** for trigger events on top companies
-9. Score, rank, and generate outreach angles
-10. Present structured results
+3. **Enrich** top 10-15: profiles + company data
+4. **DuckDuckGo** for trigger events
+5. Score, rank, present
+
+**For compound queries (3+ constraints or niche verticals):**
+1. Parse ICP, identify searchable vs non-searchable constraints
+2. **Find companies first** (parallel):
+   - Crunchbase: by vertical keywords + location + funding stage
+   - DuckDuckGo: "[vertical] startups [location] funded 2025 2026"
+   - YC: by industry + batch (if targeting startups)
+   - LinkedIn company search: by keywords
+3. **Find people at those companies** (LinkedIn people search with company filter)
+4. **Apply non-searchable filters** (gender from names, other criteria from profiles)
+5. **Enrich** survivors: full profiles + company details + funding verification
+6. Score, rank, present
+
+### Fallback Chains
+
+Data sources fail. Use these fallbacks:
+
+| Need | Primary | Fallback 1 | Fallback 2 |
+|------|---------|------------|------------|
+| Company funding data | Crunchbase `db_search` | DuckDuckGo `"[company] funding raised"` | WebSearch |
+| Company details | LinkedIn `get_company` | Crunchbase `company` | Firecrawl on website |
+| Person profiles | LinkedIn `get_profile` | DuckDuckGo `"[name] [company] LinkedIn"` | WebSearch |
+| Startup discovery | YC `search_companies` | Crunchbase `db_search` | DuckDuckGo |
+| Trigger events | LinkedIn company posts | DuckDuckGo `"[company] news 2026"` | WebSearch |
+
+When a source returns an error, do NOT retry the same query. Simplify params or switch to the fallback.
 
 ---
 
@@ -383,6 +448,35 @@ WebSearch query="[Company] news funding 2026"
 - Use built-in WebSearch as fallback
 - Search: "[title] [industry] [location] LinkedIn"
 - Acknowledge reduced data quality in output
+
+---
+
+## Known Limitations
+
+Be transparent about these with the user:
+
+**Non-searchable criteria:**
+- **Gender** - no API supports this. Infer from first names after search. Acknowledge this is imperfect for ambiguous or non-Western names. Cast a wider net and filter down.
+- **Ethnicity, age, personality** - not available. Don't attempt to infer.
+- **"Culture fit" or subjective traits** - can't be searched. Suggest the user review profiles manually.
+
+**Niche verticals:**
+- Keywords like "Voice AI", "synthetic biology", or "quantum computing" rarely appear in LinkedIn titles. Search for companies in the space first (via DuckDuckGo/Crunchbase), then find people at those companies.
+
+**Funding recency:**
+- Crunchbase has funding dates but complex queries may fail. Always have a DuckDuckGo fallback: `"[company name] funding raised 2025 2026"`.
+- LinkedIn has no funding data at all.
+
+**Search result quality:**
+- LinkedIn keyword search is fuzzy - "voice AI founder" may return people who are AI founders with "voice" somewhere in their profile, not necessarily in voice AI.
+- Title search is exact word match - "Founder" won't match "Co-Founder". Always search multiple title variations.
+- Company-first search (find companies, then people) is more precise for niche verticals than people-first search.
+
+**When results are thin (fewer than 5 quality matches):**
+Tell the user honestly. Suggest:
+1. Broadening one constraint (location, company size, or vertical)
+2. Trying adjacent verticals (e.g., "conversational AI" instead of "voice AI")
+3. Using DuckDuckGo to find curated lists or directories in the space
 
 ---
 
@@ -424,6 +518,19 @@ Find 10 more companies like these.
 ```
 /search-leads founders of AI startups in Seattle
 ```
+
+### Example 6: Compound Query (multiple constraints)
+```
+/search-leads
+Find female founders in Voice AI space in the Bay Area
+who raised funding in the last 12 months
+```
+This is a compound query (niche vertical + gender + location + funding recency).
+The agent should:
+1. Search for Voice AI companies via DuckDuckGo + Crunchbase
+2. Find founders at those companies on LinkedIn
+3. Filter by gender using first names
+4. Verify funding via Crunchbase or DuckDuckGo news search
 
 ---
 
