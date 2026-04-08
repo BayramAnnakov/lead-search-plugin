@@ -124,24 +124,51 @@ firecrawl_scrape: Website content, product positioning
 
 **Run searches using AnySite MCP tools.** Make multiple parallel searches for better coverage.
 
-**Primary search tool:**
+**CRITICAL: Maximize parallel tool calls.** The biggest speed gain comes from batching independent calls in a single message. Do NOT call tools one at a time when they don't depend on each other.
+
+**Parallelism rules:**
+- **Batch together** (same message): calls that don't depend on each other's results
+- **Wait for results** (next message): calls that need data from previous calls
+- **Never sequentialize** independent searches - 3 parallel searches take the same time as 1
+
+**Phase 1 - Discovery (all parallel in one message):**
 ```
-search_linkedin_users:
-  keywords: [derived from ICP]
-  title: [target titles]
-  location: [target geography]
-  count: 10-25 per search
+# Simple query: batch 2-3 LinkedIn title variations
+search_linkedin_users(title="VP Sales", location="US", count=15)       # ← parallel
+search_linkedin_users(title="Head of Revenue", location="US", count=15) # ← parallel
+search_linkedin_users(title="CRO", location="US", count=15)            # ← parallel
+
+# Compound query: batch across sources
+search_linkedin_users(keywords="voice AI", title="Founder", ...)  # ← parallel
+duckduckgo_search("voice AI startups Bay Area funded 2025 2026")  # ← parallel
+crunchbase db_search(keywords="voice AI", location="SF", ...)     # ← parallel
+search_yc_companies(industries=["B2B"], count=10)                 # ← parallel
 ```
 
-**Search strategy:**
-1. **Start specific** - use exact title + industry + location
-2. **Expand if needed** - broaden title variations or location
-3. **Run parallel searches** for different title variations:
-   - Search 1: Primary title (e.g., "VP Sales")
-   - Search 2: Alternative title (e.g., "Head of Revenue")
-   - Search 3: Adjacent title (e.g., "CRO", "Director of Sales")
+**Phase 2 - People at companies (depends on Phase 1, but internal calls parallel):**
+```
+# After Phase 1 returns company names, search for founders at each - all parallel
+search_linkedin_users(company_keywords="Rime", title="Founder", count=5)   # ← parallel
+search_linkedin_users(company_keywords="Deepgram", title="CEO", count=5)   # ← parallel
+search_linkedin_users(company_keywords="ElevenLabs", title="CTO", count=5) # ← parallel
+```
 
-**Supplementary searches:**
+**Phase 3 - Enrichment (depends on Phase 2, but internal calls parallel):**
+```
+# Enrich top 10 candidates - all parallel
+get_linkedin_profile(user="lilyjclifford")   # ← parallel
+get_linkedin_profile(user="john-doe")         # ← parallel
+get_linkedin_profile(user="jane-smith")       # ← parallel
+get_linkedin_company(company="rime-ai")       # ← parallel
+get_linkedin_company(company="deepgram")      # ← parallel
+duckduckgo_search("Rime Labs funding 2025")   # ← parallel
+duckduckgo_search("Deepgram Series B 2025")   # ← parallel
+```
+
+**In total: 3 sequential phases, but within each phase everything runs in parallel.**
+A 10-lead search with enrichment should take ~3 rounds of tool calls, not 30+.
+
+**Supplementary search patterns:**
 ```
 # Find companies first, then people at those companies
 search_linkedin_companies: keywords, size, industry
@@ -154,21 +181,22 @@ duckduckgo_search: "[industry] hiring sales team"
 
 ### Step 4: Enrich Top Candidates
 
-For the top 10-15 results from search:
+For the top 10-15 results from search. **This is the slowest phase - parallelism matters most here.**
+
+**Batch ALL enrichment calls in one message** (they're all independent):
 
 ```
-# Get full profile details
-get_linkedin_profile: Full background, experience, skills, education
-
-# Get company details
-get_linkedin_company: Company size, industry, description, specialties
-
-# Check for trigger events
-get_linkedin_company_posts: Recent announcements, product launches
-duckduckgo_search: "[Company] funding hiring news 2026"
+# All of these go in ONE message - they run in parallel:
+get_linkedin_profile(user="candidate-1")          # ← parallel
+get_linkedin_profile(user="candidate-2")          # ← parallel
+get_linkedin_profile(user="candidate-3")          # ← parallel
+get_linkedin_company(company="company-1")         # ← parallel
+get_linkedin_company(company="company-2")         # ← parallel
+duckduckgo_search("Company-1 funding news 2026")  # ← parallel
+duckduckgo_search("Company-2 funding news 2026")  # ← parallel
 ```
 
-**Run enrichment calls in parallel** where independent (e.g., profile + company for the same lead can be parallel).
+If enriching 10+ leads, split into 2 batches of 5-7 calls each (some MCP servers throttle very large batches).
 
 **What to extract per lead:**
 - Current role and tenure
