@@ -330,9 +330,11 @@ execute(source="linkedin", category="search", endpoint="sn_search_users",
           company_sizes: ["11-50","51-200"], count: 10})
 
 execute(source="crunchbase", category="db", endpoint="db_search",
-  params={keywords: "AI", location: "Seattle",
+  params={industry: ["Artificial Intelligence (AI)"], location: ["Seattle"],
           employee_count_min: 11, employee_count_max: 250,
-          last_funding_type: ["seed","series_a","series_b"], count: 10})
+          last_funding_type: ["seed","series_a","series_b"], count: 25})
+# industry drives relevance — use exact Crunchbase category names (see note below).
+# Never rely on `keywords` alone; always set employee_count_max to exclude giants.
 
 execute(source="yc", category="search", endpoint="search_companies",
   params={industries: ["B2B"], is_hiring: true, count: 10})
@@ -354,10 +356,17 @@ get_page(cache_key="<from execute result>", offset=10, limit=10)
 - Revenue ranges (when available)
 - Trigger events: leadership hires, acquisitions, layoffs, news
 
-**Crunchbase reliability note:** Complex multi-parameter queries (location + keywords + funding filters combined) may return 500 errors. If this happens:
-- Simplify the query: use fewer filters, try keywords alone first
-- Use `query_cache` to filter results after a simpler fetch succeeds
-- Fall back to DuckDuckGo: `"[company] series A funding 2025 2026"` for funding verification
+**Crunchbase `db_search` — getting good results:**
+
+The #1 cause of bad Crunchbase results is a wrong `industry` value, NOT query complexity. Compound queries (`industry` + `location` + `employee_count` + `last_funding_type` + `last_funding_date_after`, all combined) work fine — that combination is the recommended default.
+
+- **`industry` must use exact Crunchbase category names, including suffixes.** `"Artificial Intelligence"` returns ZERO results — the real taxonomy value is `"Artificial Intelligence (AI)"`. Common valid values: `Artificial Intelligence (AI)`, `Machine Learning`, `Generative AI`, `Natural Language Processing`, `Computer Vision`, `Predictive Analytics`, `SaaS`, `FinTech`, `Cyber Security`, `Robotics`, `Biotechnology`, `Health Care`. If unsure of a value, run one broad search and read the `categories[]` field of the results to learn the exact taxonomy, then re-query with those values.
+- **Never search `keywords` alone.** `keywords` matches free-text company descriptions, so giants like Amazon match "AI" and rank alongside a 10-person startup. Pair `keywords` with `industry` + structured filters, or skip `keywords` entirely and let `industry` drive relevance.
+- **Always set `employee_count_max`** (e.g. 250 or 500) to exclude incumbents — without it, established public companies dominate.
+- **Empty results (`{"results":[]}`)** mean a filter VALUE matched nothing — almost always `industry` or `location`. Fix the value; do NOT just delete filters or fall back to `keywords` alone.
+- **`last_funding_date_after` / `_before`** take Unix timestamps in seconds — convert dates before passing.
+- **Expect large output.** Full company objects run ~100K+ chars per 10 items, so `execute` results are usually saved to a file with a `cache_key`. Use `jq` on the file (or `query_cache`) to slice fields; use `get_page` to paginate. Never re-`execute` the same search.
+- If a query genuinely 500s, verify the `industry` value first, then drop ONE filter at a time (start with `funding_total_*`) to isolate the cause.
 
 **Y Combinator** search is great for finding funded startups:
 - Filter by batch (e.g., "Winter 2026"), industry, team size, hiring status
@@ -421,7 +430,7 @@ WebSearch query="[Company] news funding 2026"
 **For compound queries (3+ constraints or niche verticals):**
 1. Parse ICP, identify searchable vs non-searchable constraints
 2. **Find companies first** (parallel):
-   - Crunchbase: by vertical keywords + location + funding stage
+   - Crunchbase: by `industry` (exact category name) + location + funding stage + `employee_count_max` — see Crunchbase notes
    - DuckDuckGo: "[vertical] startups [location] funded 2025 2026"
    - YC: by industry + batch (if targeting startups)
    - LinkedIn company search: by keywords
@@ -492,7 +501,7 @@ Be transparent about these with the user:
 - Keywords like "Voice AI", "synthetic biology", or "quantum computing" rarely appear in LinkedIn titles. Search for companies in the space first (via DuckDuckGo/Crunchbase), then find people at those companies.
 
 **Funding recency:**
-- Crunchbase has funding dates but complex queries may fail. Always have a DuckDuckGo fallback: `"[company name] funding raised 2025 2026"`.
+- Crunchbase has funding dates and compound queries work reliably. If a query returns empty, the `industry` value is almost always wrong (see Crunchbase notes), not the query complexity. Keep a DuckDuckGo fallback for verification: `"[company name] funding raised 2025 2026"`.
 - LinkedIn has no funding data at all.
 
 **Search result quality:**
